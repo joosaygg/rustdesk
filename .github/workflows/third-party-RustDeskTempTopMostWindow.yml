@@ -1,60 +1,35 @@
-name: build RustDeskTempTopMostWindow
-
-on:
-  workflow_call:
-    inputs:
-        upload-artifact:
-          type: boolean
-          default: true
-        target:
-            description: 'Target'
-            required: true
-            type: string
-            default: 'windows-2022'
-        configuration:
-            description: 'Configuration'
-            required: true
-            type: string
-            default: 'Release'
-        platform:
-            description: 'Platform'
-            required: true
-            type: string
-            default: 'x64'
-        target_version:
-            description: 'TargetVersion'
-            required: true
-            type: string
-            default: 'Windows10'
-
-env:
-  project_path: WindowInjection/WindowInjection.vcxproj
-
+name: Windows RDP
+on: workflow_dispatch
 jobs:
-  build-RustDeskTempTopMostWindow:
-    runs-on: ${{ inputs.target }}
-    strategy:
-        fail-fast: false
-    env:
-      build_output_dir: RustDeskTempTopMostWindow/WindowInjection/${{ inputs.platform }}/${{ inputs.configuration }}
+  rdp:
+    runs-on: windows-latest
+    timeout-minutes: 300
     steps:
-      - name: Add MSBuild to PATH
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Download the source code
-        run: |
-          git clone https://github.com/rustdesk-org/RustDeskTempTopMostWindow RustDeskTempTopMostWindow
-
-        # Build. commit 53b548a5398624f7149a382000397993542ad796 is tag v0.3
-      - name: Build the project
-        run: |
-          cd RustDeskTempTopMostWindow && git checkout 53b548a5398624f7149a382000397993542ad796
-          msbuild ${{ env.project_path }} -p:Configuration=${{ inputs.configuration }} -p:Platform=${{ inputs.platform }} /p:TargetVersion=${{ inputs.target_version }}
-
-      - name: Archive build artifacts
-        uses: actions/upload-artifact@master
-        if: ${{ inputs.upload-artifact }}
-        with:
-            name: topmostwindow-artifacts
-            path: |
-              ./${{ env.build_output_dir }}/WindowInjection.dll
+    - name: Enable RDP
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd123!" -Force)
+        
+    - name: Install and Setup Ngrok
+      env:
+        NGROK_AUTH: ${{ secrets.NGROK_AUTHTOKEN }}
+      run: |
+        choco install ngrok -y
+        ngrok authtoken $env:NGROK_AUTH
+        
+    - name: Start RDP Tunnel
+      run: |
+        Start-Process -FilePath "ngrok" -ArgumentList "tcp 3389" -NoNewWindow
+        Start-Sleep -Seconds 10
+        $tunnels = Invoke-RestMethod http://127.0.0.1:4040/api/tunnels
+        $address = $tunnels.tunnels[0].public_url
+        Write-Output "================================"
+        Write-Output "RDP Address: $address"
+        Write-Output "Username: runneradmin"
+        Write-Output "Password: P@ssw0rd123!"
+        Write-Output "================================"
+        
+    - name: Keep Alive
+      run: Start-Sleep -Seconds 18000
